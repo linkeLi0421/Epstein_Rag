@@ -1,0 +1,136 @@
+services:
+  # ─── PostgreSQL Database ──────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-epstein_rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-epstein_rag}
+      POSTGRES_DB: ${POSTGRES_DB:-epstein_rag}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-epstein_rag}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - epstein-net
+
+  # ─── ChromaDB Vector Store ────────────────────────────────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    restart: unless-stopped
+    environment:
+      ANONYMIZED_TELEMETRY: "false"
+      CHROMA_SERVER_HOST: "0.0.0.0"
+      CHROMA_SERVER_HTTP_PORT: "8000"
+    ports:
+      - "${CHROMA_PORT:-8000}:8000"
+    volumes:
+      - chroma_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - epstein-net
+
+  # ─── MCP Server (Core RAG Engine) ────────────────────────────────────
+  mcp-server:
+    build:
+      context: ./mcp_server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-epstein_rag}:${POSTGRES_PASSWORD:-epstein_rag}@postgres:5432/${POSTGRES_DB:-epstein_rag}"
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      CHROMA_COLLECTION: ${CHROMA_COLLECTION:-epstein_documents}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-200}
+      DEFAULT_TOP_K: ${DEFAULT_TOP_K:-5}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MCP_SERVER_NAME: ${MCP_SERVER_NAME:-epstein-rag}
+    ports:
+      - "${MCP_SERVER_PORT:-8080}:8080"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - epstein-net
+
+  # ─── Dashboard Backend (FastAPI Observability API) ────────────────────
+  dashboard-backend:
+    build:
+      context: ./dashboard_backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DASHBOARD_DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-epstein_rag}:${POSTGRES_PASSWORD:-epstein_rag}@postgres:5432/${POSTGRES_DB:-epstein_rag}"
+      DASHBOARD_HOST: "0.0.0.0"
+      DASHBOARD_PORT: "8001"
+      DASHBOARD_DEBUG: ${DASHBOARD_DEBUG:-false}
+      DASHBOARD_CORS_ORIGINS: '["http://localhost:3000","http://dashboard-frontend:80"]'
+      DASHBOARD_WS_HEARTBEAT_INTERVAL: ${WS_HEARTBEAT_INTERVAL:-30}
+    ports:
+      - "${DASHBOARD_BACKEND_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/api/dashboard/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - epstein-net
+
+  # ─── Dashboard Frontend (React + Nginx) ───────────────────────────────
+  dashboard-frontend:
+    build:
+      context: ./dashboard_frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8001}
+        VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8001}
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_FRONTEND_PORT:-3000}:80"
+    depends_on:
+      dashboard-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - epstein-net
+
+volumes:
+  postgres_data:
+    driver: local
+  chroma_data:
+    driver: local
+
+networks:
+  epstein-net:
+    driver: bridge

@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from dashboard_backend.api import health, jobs, queries, websocket
+from dashboard_backend.api import health, jobs, queries, search, websocket
 from dashboard_backend.config import get_settings
 from dashboard_backend.db import close_db, init_db
 
@@ -79,6 +79,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(queries.router)
 app.include_router(jobs.router)
 app.include_router(health.router)
+app.include_router(search.router)
 app.include_router(websocket.router)
 
 

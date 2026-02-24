@@ -14,8 +14,9 @@ import { cn } from "../lib/utils";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/search", icon: Search, label: "Search" },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
-  { to: "/queries", icon: Search, label: "Queries" },
+  { to: "/queries", icon: Database, label: "Query Log" },
   { to: "/jobs", icon: FolderOpen, label: "Jobs" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];

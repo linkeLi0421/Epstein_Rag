@@ -12,5 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . ./services/
 
-# Run as module so relative imports work
-CMD ["python", "-m", "services.pipeline", "--verbose"]
+# Default: run the data prep script (one-step download + extract + index)
+# Override with: docker compose run pipeline python -m services.pipeline --verbose
+CMD ["python", "-m", "services.data_prep", "--verbose"]

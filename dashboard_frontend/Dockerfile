@@ -29,25 +29,31 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Use Docker DNS resolver with short TTL to handle container restarts
+    resolver 127.0.0.11 valid=10s;
+    set $backend "http://dashboard-backend:8001";
+
     # SPA fallback
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # API proxy (optional - can also use direct URLs from frontend)
+    # API proxy
     location /api/ {
-        proxy_pass http://dashboard-backend:8001;
+        proxy_pass $backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 120s;
     }
 
     # WebSocket proxy
     location /ws/ {
-        proxy_pass http://dashboard-backend:8001;
+        proxy_pass $backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+        proxy_read_timeout 86400s;
     }
 
     # Cache static assets

@@ -87,6 +87,9 @@ services:
       DASHBOARD_DEBUG: ${DASHBOARD_DEBUG:-false}
       DASHBOARD_CORS_ORIGINS: '["http://localhost:3000","http://dashboard-frontend:80"]'
       DASHBOARD_WS_HEARTBEAT_INTERVAL: ${WS_HEARTBEAT_INTERVAL:-30}
+      DASHBOARD_CHROMA_HOST: chromadb
+      DASHBOARD_CHROMA_PORT: "8000"
+      DASHBOARD_CHROMA_COLLECTION: ${CHROMA_COLLECTION:-epstein_documents}
     ports:
       - "${DASHBOARD_BACKEND_PORT:-8001}:8001"
     depends_on:
@@ -100,6 +103,34 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    networks:
+      - epstein-net
+
+  # ─── Data Pipeline (on-demand indexing) ──────────────────────────────
+  pipeline:
+    build:
+      context: ./services
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-epstein_rag}:${POSTGRES_PASSWORD:-epstein_rag}@postgres:5432/${POSTGRES_DB:-epstein_rag}"
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      CHROMA_COLLECTION: ${CHROMA_COLLECTION:-epstein_documents}
+      DATASET_DIR: /app/data/raw
+      STATE_DIR: /app/data/state
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-200}
+      MAX_WORKERS: ${MAX_WORKERS:-4}
+      BATCH_SIZE: ${BATCH_SIZE:-50}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    profiles:
+      - pipeline
     networks:
       - epstein-net
 

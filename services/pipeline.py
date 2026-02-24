@@ -237,19 +237,46 @@ class Pipeline:
             return 0
 
         try:
-            import chromadb
-
-            client = chromadb.HttpClient(
-                host=self.chroma_host, port=self.chroma_port
-            )
-            collection = client.get_or_create_collection(
-                name=self.chroma_collection,
-                metadata={"hnsw:space": "cosine"},
-            )
+            # Use chromadb Python client if available and working
+            try:
+                import chromadb
+                client = chromadb.HttpClient(
+                    host=self.chroma_host, port=self.chroma_port
+                )
+                collection = client.get_or_create_collection(
+                    name=self.chroma_collection,
+                    metadata={"hnsw:space": "cosine"},
+                )
+                use_http_fallback = False
+            except Exception as client_err:
+                logger.warning(
+                    "chromadb client init failed (%s), using HTTP API fallback",
+                    client_err,
+                )
+                use_http_fallback = True
 
             # Index in batches to avoid oversized requests
             index_batch_size = 100
             indexed = 0
+            base_url = f"http://{self.chroma_host}:{self.chroma_port}/api/v2"
+
+            if use_http_fallback:
+                import requests as _req
+
+                # Ensure collection exists
+                _req.post(
+                    f"{base_url}/tenants/default_tenant/databases/default_database/collections",
+                    json={
+                        "name": self.chroma_collection,
+                        "metadata": {"hnsw:space": "cosine"},
+                    },
+                )
+                # Get collection ID
+                resp = _req.get(
+                    f"{base_url}/tenants/default_tenant/databases/default_database/collections/{self.chroma_collection}"
+                )
+                resp.raise_for_status()
+                collection_id = resp.json()["id"]
 
             for i in range(0, len(chunks), index_batch_size):
                 if self._cancelled:
@@ -262,11 +289,22 @@ class Pipeline:
                 documents = [c.text for c in batch]
                 metadatas = [c.metadata for c in batch]
 
-                collection.upsert(
-                    ids=ids,
-                    documents=documents,
-                    metadatas=metadatas,
-                )
+                if use_http_fallback:
+                    resp = _req.post(
+                        f"{base_url}/tenants/default_tenant/databases/default_database/collections/{collection_id}/upsert",
+                        json={
+                            "ids": ids,
+                            "documents": documents,
+                            "metadatas": metadatas,
+                        },
+                    )
+                    resp.raise_for_status()
+                else:
+                    collection.upsert(
+                        ids=ids,
+                        documents=documents,
+                        metadatas=metadatas,
+                    )
                 indexed += len(batch)
 
                 logger.info(

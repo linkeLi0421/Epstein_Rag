@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     # WebSocket
     ws_heartbeat_interval: int = 30  # seconds
 
+    # ChromaDB (for health checks)
+    chroma_host: str = "localhost"
+    chroma_port: int = 8000
+    chroma_collection: str = "epstein_documents"
+
     # Pagination defaults
     default_page_size: int = 50
     max_page_size: int = 200

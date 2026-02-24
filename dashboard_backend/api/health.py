@@ -2,11 +2,13 @@
 
 import time
 
+import httpx
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, desc, extract, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from dashboard_backend.config import get_settings
 from dashboard_backend.db import get_db
 from dashboard_backend.models import IndexingJob, QueryLog, SystemMetric
 from dashboard_backend.schemas import (
@@ -70,21 +72,23 @@ async def get_system_health(
         )
     )
 
-    # Check vector DB via metrics
+    # Check vector DB by probing ChromaDB directly
     try:
-        vdb_metric = await db.execute(
-            select(SystemMetric)
-            .where(SystemMetric.metric_name == "vector_db_status")
-            .order_by(desc(SystemMetric.timestamp))
-            .limit(1)
-        )
-        vdb = vdb_metric.scalar_one_or_none()
-        if vdb and vdb.metric_value == 1.0:
-            components.append(ComponentHealth(name="Vector Database", status="connected"))
-        else:
-            components.append(ComponentHealth(name="Vector Database", status="unknown", details="No status reported"))
+        settings = get_settings()
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            vdb_resp = await client.get(
+                f"http://{settings.chroma_host}:{settings.chroma_port}/api/v2/tenants/default_tenant/databases/default_database/collections/{settings.chroma_collection}"
+            )
+            if vdb_resp.status_code == 200:
+                count_resp = await client.get(
+                    f"http://{settings.chroma_host}:{settings.chroma_port}/api/v2/tenants/default_tenant/databases/default_database/collections/{vdb_resp.json()['id']}/count"
+                )
+                doc_count = count_resp.json() if count_resp.status_code == 200 else "?"
+                components.append(ComponentHealth(name="Vector Database", status="connected", details=f"{doc_count} chunks indexed"))
+            else:
+                components.append(ComponentHealth(name="Vector Database", status="warning", details="Collection not found"))
     except Exception:
-        components.append(ComponentHealth(name="Vector Database", status="unknown"))
+        components.append(ComponentHealth(name="Vector Database", status="error", details="ChromaDB unreachable"))
 
     # Determine overall status
     statuses = [c.status for c in components]
